@@ -3,10 +3,11 @@ package pubgo
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 )
 
-type MsgHandler func(msg any) error
+type MsgHandler func(topic string, msg any) error
 type optHandler func(cfg *subscriptionOps)
 
 type subscriptionOps struct {
@@ -18,11 +19,34 @@ type subscriptionOps struct {
 
 type Subscription struct {
 	id            int
+	topic         string
 	bufferSize    int
 	readTimeout   time.Duration
 	msgs          chan any
 	done          chan<- int
 	doneListening chan struct{}
+}
+
+type Subscriptions struct {
+	subs []*Subscription
+	out  chan struct {
+		topic string
+		msg   any
+	}
+}
+
+func Combine(size int, s ...*Subscription) *Subscriptions {
+	subs := &Subscriptions{
+		subs: s,
+		out: make(chan struct {
+			topic string
+			msg   any
+		}, size),
+	}
+
+	subs.fanIn()
+
+	return subs
 }
 
 func defaultSubscriptionOps() subscriptionOps {
@@ -48,7 +72,7 @@ func WithBufferSize(s int) optHandler {
 // Function could block undefinetely if subscribtion never gets canceled.
 func (s *Subscription) Do(ctx context.Context, fn MsgHandler) error {
 	for msg := range s.msgs {
-		err := fn(msg)
+		err := fn(s.topic, msg)
 		if err != nil {
 			return err
 		}
@@ -77,7 +101,7 @@ func (s *Subscription) NextWithTimeout(ctx context.Context) (any, error) {
 func (s *Subscription) Next(ctx context.Context) (any, error) {
 	msg, ok := <-s.msgs
 	if !ok {
-		return msg, fmt.Errorf("subscribtion closed: could not read msgs")
+		return msg, fmt.Errorf("subscription closed: could not read msgs")
 	}
 
 	return msg, nil
@@ -93,4 +117,62 @@ func (s *Subscription) Done() {
 
 func (s *Subscription) ID() int {
 	return s.id
+}
+
+func (subs *Subscriptions) NextWithTimeout(ctx context.Context, timeout time.Duration) (string, any, error) {
+	select {
+	case msg := <-subs.out:
+		return msg.topic, msg.msg, nil
+	case <-time.After(timeout):
+		return "", nil, fmt.Errorf("readtimeout: could read msg in time")
+	}
+}
+
+func (subs *Subscriptions) Next(ctx context.Context) (string, any, error) {
+	msg, ok := <-subs.out
+	if !ok {
+		return "", nil, fmt.Errorf("subscriptions closed: could not read more msgs")
+	}
+
+	return msg.topic, msg.msg, nil
+}
+
+func (subs *Subscriptions) Do(ctx context.Context, fn MsgHandler) error {
+	for msg := range subs.out {
+		err := fn(msg.topic, msg.msg)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (subs *Subscriptions) Done() {
+	for _, sub := range subs.subs {
+		sub.Done()
+	}
+}
+
+func (subs *Subscriptions) fanIn() {
+	var wg sync.WaitGroup
+
+	for _, sub := range subs.subs {
+		wg.Go(func() {
+			for msg := range sub.msgs {
+				subs.out <- struct {
+					topic string
+					msg   any
+				}{
+					topic: sub.topic,
+					msg:   msg,
+				}
+			}
+		})
+	}
+
+	go func() {
+		wg.Wait()
+		close(subs.out)
+	}()
 }

@@ -179,6 +179,7 @@ func (b *Bus) Subscribe(topic string, opts ...optHandler) *Subscription {
 	s := &Subscription{
 		bufferSize:    opt.BufferSize,
 		readTimeout:   opt.ReadTimeout,
+		topic:         topic,
 		msgs:          make(chan any, opt.BufferSize),
 		done:          b.cancelSub,
 		doneListening: make(chan struct{}),
