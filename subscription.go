@@ -7,8 +7,10 @@ import (
 	"time"
 )
 
-type MsgHandler func(topic string, msg any) error
-type optHandler func(cfg *subscriptionOps)
+type (
+	MsgHandler func(topic string, msg any) error
+	OptHandler func(cfg *subscriptionOps)
+)
 
 type subscriptionOps struct {
 	// Size of a subscriber's msg buffer. If buffer is full, new msg are dropped.
@@ -52,25 +54,25 @@ func Combine(size int, s ...*Subscription) *Subscriptions {
 func defaultSubscriptionOps() subscriptionOps {
 	return subscriptionOps{
 		BufferSize:  0,
-		ReadTimeout: time.Second * 10,
+		ReadTimeout: time.Second * 10, //nolint: mnd
 	}
 }
 
-func WithReadTimeout(duration time.Duration) optHandler {
+func WithReadTimeout(duration time.Duration) OptHandler {
 	return func(cfg *subscriptionOps) {
 		cfg.ReadTimeout = duration
 	}
 }
 
-func WithBufferSize(s int) optHandler {
+func WithBufferSize(s int) OptHandler {
 	return func(cfg *subscriptionOps) {
 		cfg.BufferSize = s
 	}
 }
 
 // Do runs fn each time a msg that is received. Call blocks until an fn call returns an error.
-// Function could block undefinetely if subscribtion never gets canceled.
-func (s *Subscription) Do(ctx context.Context, fn MsgHandler) error {
+// Function could block undefinetely if subscription never gets canceled.
+func (s *Subscription) Do(_ context.Context, fn MsgHandler) error {
 	for msg := range s.msgs {
 		err := fn(s.topic, msg)
 		if err != nil {
@@ -83,7 +85,7 @@ func (s *Subscription) Do(ctx context.Context, fn MsgHandler) error {
 
 // NextWithTimeout reads the next available msg or returns a timeout error if
 // no msg is available.
-func (s *Subscription) NextWithTimeout(ctx context.Context) (any, error) {
+func (s *Subscription) NextWithTimeout(_ context.Context) (any, error) {
 	select {
 	case msg, ok := <-s.msgs:
 		if !ok {
@@ -98,7 +100,7 @@ func (s *Subscription) NextWithTimeout(ctx context.Context) (any, error) {
 
 // Next blocks until a msg is received. Returns an error if performed on
 // a closed subscription.
-func (s *Subscription) Next(ctx context.Context) (any, error) {
+func (s *Subscription) Next(_ context.Context) (any, error) {
 	msg, ok := <-s.msgs
 	if !ok {
 		return msg, fmt.Errorf("subscription closed: could not read msgs")
@@ -119,7 +121,7 @@ func (s *Subscription) ID() int {
 	return s.id
 }
 
-func (subs *Subscriptions) NextWithTimeout(ctx context.Context, timeout time.Duration) (string, any, error) {
+func (subs *Subscriptions) NextWithTimeout(_ context.Context, timeout time.Duration) (string, any, error) {
 	select {
 	case msg := <-subs.out:
 		return msg.topic, msg.msg, nil
@@ -128,7 +130,7 @@ func (subs *Subscriptions) NextWithTimeout(ctx context.Context, timeout time.Dur
 	}
 }
 
-func (subs *Subscriptions) Next(ctx context.Context) (string, any, error) {
+func (subs *Subscriptions) Next(_ context.Context) (string, any, error) {
 	msg, ok := <-subs.out
 	if !ok {
 		return "", nil, fmt.Errorf("subscriptions closed: could not read more msgs")
@@ -137,7 +139,7 @@ func (subs *Subscriptions) Next(ctx context.Context) (string, any, error) {
 	return msg.topic, msg.msg, nil
 }
 
-func (subs *Subscriptions) Do(ctx context.Context, fn MsgHandler) error {
+func (subs *Subscriptions) Do(_ context.Context, fn MsgHandler) error {
 	for msg := range subs.out {
 		err := fn(msg.topic, msg.msg)
 		if err != nil {

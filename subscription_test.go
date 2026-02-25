@@ -16,7 +16,7 @@ import (
 func TestSubDo(t *testing.T) {
 	var wg sync.WaitGroup
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	b := pubgo.NewBusWithContext(ctx, pubgo.DefaultOps())
@@ -27,7 +27,7 @@ func TestSubDo(t *testing.T) {
 		pubgo.WithReadTimeout(time.Second*1))
 
 	wg.Go(func() {
-		s.Do(context.Background(), func(_ string, msg any) error {
+		err := s.Do(context.Background(), func(_ string, msg any) error {
 			t.Log("received msg", msg)
 			str, ok := msg.(string)
 			require.True(t, ok, "type should be string")
@@ -36,12 +36,13 @@ func TestSubDo(t *testing.T) {
 
 			if str == "done" {
 				s.Done()
-				return fmt.Errorf("done reading!")
+
+				return fmt.Errorf("done reading")
 			}
 
 			return nil
 		})
-
+		require.NoError(t, err)
 	})
 
 	time.Sleep(time.Millisecond * 1)

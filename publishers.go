@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-type publisher func(b *Bus, subs []*Subscription, msg any) error
+type Publisher func(b *Bus, subs []*Subscription, msg any) error
 
-func GaranteedPublish() publisher {
+func GaranteedPublish() Publisher {
 	return func(b *Bus, subs []*Subscription, msg any) error {
 		return garanteedPublish(b, subs, msg)
 	}
@@ -29,7 +29,7 @@ func garanteedPublish(b *Bus, subs []*Subscription, msg any) error {
 	return nil
 }
 
-func AvailablePublish() publisher {
+func AvailablePublish() Publisher {
 	return func(b *Bus, subs []*Subscription, msg any) error {
 		return availablePublish(b, subs, msg)
 	}
@@ -51,13 +51,13 @@ func availablePublish(b *Bus, subs []*Subscription, msg any) error {
 	return nil
 }
 
-func NonBlockingPublish() publisher {
+func NonBlockingPublish() Publisher {
 	return func(b *Bus, subs []*Subscription, msg any) error {
 		return nonBlockingPublish(b, subs, msg, time.Hour)
 	}
 }
 
-func NonBlockingPublishWithTimeout(timeout time.Duration) publisher {
+func NonBlockingPublishWithTimeout(timeout time.Duration) Publisher {
 	return func(b *Bus, subs []*Subscription, msg any) error {
 		return nonBlockingPublish(b, subs, msg, timeout)
 	}
@@ -81,7 +81,6 @@ func nonBlockingPublish(b *Bus, subs []*Subscription, msg any, timeout time.Dura
 				case <-time.After(timeout):
 					log.Printf("dropping msg: broadcast timeout for subscriber %d", sub.id)
 				}
-
 			})
 		})
 	}

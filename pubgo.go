@@ -6,6 +6,11 @@ import (
 	"sync"
 )
 
+const (
+	initialTopicsCap = 50
+	initialSubsCap   = 100
+)
+
 var ErrNoAvailableSubs = errors.New("no available subscribers")
 
 type Bus struct {
@@ -15,20 +20,20 @@ type Bus struct {
 	subs        map[int]*Subscription
 	cancelSub   chan int
 	cancelTopic chan string
-	publisher   publisher
+	publisher   Publisher
 	nextID      int
 }
 
 type BusOps struct {
 	InitialTopicsCap int
 	InitialSubsCap   int
-	PublishStrat     publisher
+	PublishStrat     Publisher
 }
 
 func DefaultOps() BusOps {
 	return BusOps{
-		InitialTopicsCap: 50,
-		InitialSubsCap:   100,
+		InitialTopicsCap: initialTopicsCap,
+		InitialSubsCap:   initialSubsCap,
 		PublishStrat:     GaranteedPublish(),
 	}
 }
@@ -71,6 +76,7 @@ func (b *Bus) watch(ctx context.Context) {
 		case <-ctx.Done():
 			close(b.cancelSub)
 			close(b.cancelTopic)
+
 			return
 		}
 	}
@@ -103,6 +109,7 @@ func (b *Bus) writeSub(s *Subscription, topics ...string) int {
 		if _, ok := b.topics[topic]; !ok {
 			b.topics[topic] = make(map[int]struct{})
 		}
+
 		b.topics[topic][s.id] = struct{}{}
 	}
 
@@ -129,6 +136,7 @@ func (b *Bus) getSubs(topic string) ([]*Subscription, error) {
 
 	if m, ok := b.topics[topic]; ok {
 		s := make([]*Subscription, 0, len(m))
+
 		for x := range m {
 			if sub, ok := b.subs[x]; ok {
 				s = append(s, sub)
@@ -170,7 +178,7 @@ func (b *Bus) removeSubFromTopic(topic string, id int) {
 	delete(b.topics[topic], id)
 }
 
-func (b *Bus) Subscribe(topic string, opts ...optHandler) *Subscription {
+func (b *Bus) Subscribe(topic string, opts ...OptHandler) *Subscription {
 	opt := defaultSubscriptionOps()
 	for _, fn := range opts {
 		fn(&opt)
