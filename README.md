@@ -1,6 +1,13 @@
 # pubgo
 lightweight in-memory pub sub process for golang with multiple publishing and consuming strategies.
 
+## Installation
+```sh
+go get github.com/zeddo123/pubgo
+```
+
+## Usage
+
 ```go
 ctx, cancel := context.WithCancel(context.Background())
 bus := pubgo.NewBusWithContext(ctx, pubgo.BusOps{
