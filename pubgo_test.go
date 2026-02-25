@@ -16,7 +16,7 @@ type benchmarkConfig struct {
 	msgsPerPublisher int
 	subWorkDuration  time.Duration
 	pubWorkDuration  time.Duration
-	strat            pubgo.Publisher
+	strat            pubgo.Publisher //nolint: misspell
 }
 
 func TestPublisher(t *testing.T) {

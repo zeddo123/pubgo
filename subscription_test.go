@@ -42,7 +42,8 @@ func TestSubDo(t *testing.T) {
 
 			return nil
 		})
-		require.NoError(t, err)
+
+		require.Equal(t, err.Error(), "done reading")
 	})
 
 	time.Sleep(time.Millisecond * 1)
