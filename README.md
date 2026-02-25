@@ -1,3 +1,6 @@
+[![Build](https://github.com/zeddo123/pubgo/actions/workflows/build.yaml/badge.svg)](https://github.com/zeddo123/pubgo/actions/workflows/build.yaml)
+[![golangci-lint](https://github.com/zeddo123/pubgo/actions/workflows/lint.yaml/badge.svg)](https://github.com/zeddo123/pubgo/actions/workflows/lint.yaml)
+
 # pubgo
 lightweight in-memory pub sub process for golang with multiple publishing and consuming strategies.
 
