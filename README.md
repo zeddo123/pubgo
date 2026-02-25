@@ -68,3 +68,31 @@ err := bus.Publish("topic#1", "some msg to queue")
 // run cancel to stop the bus's internal goroutine to release resources
 cancel()
 ```
+
+### Benchmark
+```sh
+goos: linux
+goarch: amd64
+pkg: github.com/zeddo123/pubgo
+cpu: 13th Gen Intel(R) Core(TM) i9-13950HX
+                             │  bench.txt   │
+                             │    sec/op    │
+NonBlockingPublish_50_3_3-32   56.64m ± ∞ ¹
+GuaranteedPublish_50_3_3-32    55.78m ± ∞ ¹
+geomean                        56.21m
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                             │   bench.txt   │
+                             │     B/op      │
+NonBlockingPublish_50_3_3-32   153.2Ki ± ∞ ¹
+GuaranteedPublish_50_3_3-32    9.041Ki ± ∞ ¹
+geomean                        37.21Ki
+¹ need >= 6 samples for confidence interval at level 0.95
+
+                             │  bench.txt   │
+                             │  allocs/op   │
+NonBlockingPublish_50_3_3-32   2.893k ± ∞ ¹
+GuaranteedPublish_50_3_3-32     490.0 ± ∞ ¹
+geomean                        1.191k
+¹ need >= 6 samples for confidence interval at level 0.95
+```
