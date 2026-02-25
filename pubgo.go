@@ -6,7 +6,7 @@ import (
 	"sync"
 )
 
-var NoAvailableSubs = errors.New("no available subscribers")
+var ErrNoAvailableSubs = errors.New("no available subscribers")
 
 type Bus struct {
 	l           sync.RWMutex
@@ -141,7 +141,7 @@ func (b *Bus) getSubs(topic string) ([]*Subscription, error) {
 		return s, nil
 	}
 
-	return nil, NoAvailableSubs
+	return nil, ErrNoAvailableSubs
 }
 
 func (b *Bus) removeSub(id int) {
