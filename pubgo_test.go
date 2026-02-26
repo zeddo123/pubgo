@@ -2,11 +2,11 @@ package pubgo_test
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/zeddo123/pubgo"
 )
 
@@ -57,19 +57,6 @@ func TestPublisher(t *testing.T) {
 	wg.Wait()
 }
 
-// BenchmarkNonBlockingPublish_50_3_3 benchmarks the NonBlocking publishing strategy
-// with 50 msgs per publishers, 3 subscribers with a 50 Millisecond work delay, and 3 publishers with 1 millisecond.
-func BenchmarkNonBlockingPublish_50_3_3(b *testing.B) {
-	benchmarkPublishingStrats(b, benchmarkConfig{
-		msgsPerPublisher: 50,
-		subs:             3,
-		pubs:             3,
-		subWorkDuration:  time.Millisecond * 50,
-		pubWorkDuration:  time.Millisecond * 1,
-		strat:            pubgo.NonBlockingPublish(), //nolint: misspell
-	})
-}
-
 // BenchmarkNonBlockingPublish_50_3_3 benchmarks the Guaranteed publishing strategy
 // with 50 msgs per publishers, 3 subscribers with a 50 Millisecond work delay, and 3 publishers with 1 millisecond.
 func BenchmarkGuaranteedPublish_50_3_3(b *testing.B) {
@@ -93,41 +80,63 @@ func benchmarkPublishingStrats(b *testing.B, cfg benchmarkConfig) {
 		PublishStrat:     cfg.strat,
 	})
 
+	l := &sync.Mutex{}
+	totalDelay := 0 * time.Second
+	avgDelay := make([]time.Duration, 0, cfg.subs*b.N)
+
 	for b.Loop() {
 		var wgs sync.WaitGroup
 
 		var wgp sync.WaitGroup
 
 		for i := range cfg.subs {
-			subs[i] = bus.Subscribe("pub msg", pubgo.WithBufferSize(0))
+			subs[i] = bus.Subscribe("pub msg", pubgo.WithBufferSize(10))
 		}
 
 		for i := range cfg.subs {
 			wgs.Go(func() {
+				subTotalDelay := 0 * time.Second
+				delays := make([]time.Duration, cfg.msgsPerPublisher*cfg.pubs)
+
 				s := subs[i]
 				defer s.Done()
 
-				for range cfg.msgsPerPublisher * cfg.pubs {
-					_, err := s.Next(context.Background())
+				for j := range cfg.msgsPerPublisher * cfg.pubs {
+					// do some work
+					time.Sleep(cfg.subWorkDuration)
+
+					msg, err := s.Next(context.Background())
+					received := time.Now()
 					if err != nil {
 						b.Log("could not read msg", i, err)
 						b.Fail()
 
 						return
 					}
+
+					t, ok := msg.(time.Time)
+					require.True(b, ok)
+
+					delay := received.Sub(t)
+
+					subTotalDelay += delay
+					delays[j] = delay
 				}
+
+				l.Lock()
+				totalDelay += subTotalDelay
+				avgDelay = append(avgDelay, averageDuration(delays))
+				l.Unlock()
 			})
 		}
 
-		for i := range cfg.pubs {
+		for range cfg.pubs {
 			wgp.Go(func() {
-				for msg := range cfg.msgsPerPublisher {
-					m := fmt.Sprintf("%d_%d", i, msg)
-
+				for range cfg.msgsPerPublisher {
 					// Do work.
-					time.Sleep(time.Millisecond * 1)
+					time.Sleep(cfg.pubWorkDuration)
 
-					err := bus.Publish("pub msg", m)
+					err := bus.Publish("pub msg", time.Now())
 					if err != nil {
 						b.Fail()
 
@@ -144,4 +153,20 @@ func benchmarkPublishingStrats(b *testing.B, cfg benchmarkConfig) {
 	}
 
 	cancel()
+
+	b.ReportMetric(float64(totalDelay)/float64(b.N), "total_delay_ns/op")
+	b.ReportMetric(float64(averageDuration(avgDelay))/float64(b.N), "avg_delay_ns/op")
+}
+
+func averageDuration(durs []time.Duration) time.Duration {
+	if len(durs) == 0 {
+		return 0
+	}
+
+	var avg time.Duration
+	for i, d := range durs {
+		avg += (d - avg) / time.Duration(i+1)
+	}
+
+	return avg
 }
