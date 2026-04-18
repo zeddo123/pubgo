@@ -24,7 +24,7 @@ type Subscription struct {
 	topic         string
 	bufferSize    int
 	readTimeout   time.Duration
-	msgs          chan any
+	Msgs          chan any
 	done          chan<- int
 	doneListening chan struct{}
 }
@@ -73,7 +73,7 @@ func WithBufferSize(s int) OptHandler {
 // Do runs fn each time a msg that is received. Call blocks until an fn call returns an error.
 // Function could block undefinetely if subscription never gets canceled.
 func (s *Subscription) Do(_ context.Context, fn MsgHandler) error {
-	for msg := range s.msgs {
+	for msg := range s.Msgs {
 		err := fn(s.topic, msg)
 		if err != nil {
 			return err
@@ -87,7 +87,7 @@ func (s *Subscription) Do(_ context.Context, fn MsgHandler) error {
 // no msg is available.
 func (s *Subscription) NextWithTimeout(_ context.Context) (any, error) {
 	select {
-	case msg, ok := <-s.msgs:
+	case msg, ok := <-s.Msgs:
 		if !ok {
 			return msg, fmt.Errorf("subscription closed: could not read msgs")
 		}
@@ -101,7 +101,7 @@ func (s *Subscription) NextWithTimeout(_ context.Context) (any, error) {
 // Next blocks until a msg is received. Returns an error if performed on
 // a closed subscription.
 func (s *Subscription) Next(_ context.Context) (any, error) {
-	msg, ok := <-s.msgs
+	msg, ok := <-s.Msgs
 	if !ok {
 		return msg, fmt.Errorf("subscription closed: could not read msgs")
 	}
@@ -161,7 +161,7 @@ func (subs *Subscriptions) fanIn() {
 
 	for _, sub := range subs.subs {
 		wg.Go(func() {
-			for msg := range sub.msgs {
+			for msg := range sub.Msgs {
 				subs.out <- struct {
 					topic string
 					msg   any

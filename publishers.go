@@ -20,7 +20,7 @@ func garanteedPublish(b *Bus, subs []*Subscription, msg any) error {
 			b.acquireSub(sub, func(sub *Subscription) {
 				select {
 				case <-sub.doneListening:
-				case sub.msgs <- msg:
+				case sub.Msgs <- msg:
 				}
 			})
 		}
@@ -41,7 +41,7 @@ func availablePublish(b *Bus, subs []*Subscription, msg any) error {
 			b.acquireSub(sub, func(sub *Subscription) {
 				select {
 				case <-sub.doneListening:
-				case sub.msgs <- msg:
+				case sub.Msgs <- msg:
 				default:
 				}
 			})
@@ -77,7 +77,7 @@ func nonBlockingPublish(b *Bus, subs []*Subscription, msg any, timeout time.Dura
 			b.acquireSub(sub, func(sub *Subscription) {
 				select {
 				case <-sub.doneListening:
-				case sub.msgs <- msg:
+				case sub.Msgs <- msg:
 				case <-time.After(timeout):
 					log.Printf("dropping msg: broadcast timeout for subscriber %d", sub.id)
 				}
