@@ -88,7 +88,7 @@ func (b *Bus) removeTopic(id string) {
 
 	for subID := range b.topics[id] {
 		if s, ok := b.subs[subID]; ok {
-			close(s.msgs)
+			close(s.Msgs)
 			delete(b.subs, subID)
 		}
 	}
@@ -168,7 +168,7 @@ func (b *Bus) removeSub(id int) {
 	// received the done signal before closing the channel
 	b.subSync[id].Wait()
 
-	close(s.msgs)
+	close(s.Msgs)
 }
 
 func (b *Bus) removeSubFromTopic(topic string, id int) {
@@ -188,7 +188,7 @@ func (b *Bus) Subscribe(topic string, opts ...OptHandler) *Subscription {
 		bufferSize:    opt.BufferSize,
 		readTimeout:   opt.ReadTimeout,
 		topic:         topic,
-		msgs:          make(chan any, opt.BufferSize),
+		Msgs:          make(chan any, opt.BufferSize),
 		done:          b.cancelSub,
 		doneListening: make(chan struct{}),
 	}
