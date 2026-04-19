@@ -72,6 +72,18 @@ err := bus.Publish("topic#1", "some msg to queue")
 cancel()
 ```
 
+#### Publishing without subscribers
+When there's a new for msgs to be published without the guarantee that there's any subscribers,
+you can check the error value returned:
+```go
+err := bus.Publish("topic#42", "important message")
+if err == pubgo.ErrNoAvailableSubs {
+    // Handle no subscribers
+} else err != nil {
+    // Handle error
+}
+```
+
 ### Benchmark
 ```sh
 goos: linux

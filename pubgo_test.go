@@ -57,6 +57,15 @@ func TestPublisher(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPublishWithoutSubs(t *testing.T) {
+	b := pubgo.NewBusWithContext(t.Context(), pubgo.DefaultOps())
+
+	for range 10 {
+		err := b.Publish("void", "no one is hearing me")
+		require.ErrorIs(t, pubgo.ErrNoAvailableSubs, err)
+	}
+}
+
 // BenchmarkNonBlockingPublish_50_3_3 benchmarks the Guaranteed publishing strategy
 // with 50 msgs per publishers, 3 subscribers with a 50 Millisecond work delay, and 3 publishers with 1 millisecond.
 func BenchmarkGuaranteedPublish_50_3_3(b *testing.B) {
@@ -106,13 +115,14 @@ func benchmarkPublishingStrats(b *testing.B, cfg benchmarkConfig) {
 					time.Sleep(cfg.subWorkDuration)
 
 					msg, err := s.Next(context.Background())
-					received := time.Now()
 					if err != nil {
 						b.Log("could not read msg", i, err)
 						b.Fail()
 
 						return
 					}
+
+					received := time.Now()
 
 					t, ok := msg.(time.Time)
 					require.True(b, ok)
@@ -125,6 +135,7 @@ func benchmarkPublishingStrats(b *testing.B, cfg benchmarkConfig) {
 
 				l.Lock()
 				totalDelay += subTotalDelay
+
 				avgDelay = append(avgDelay, averageDuration(delays))
 				l.Unlock()
 			})
