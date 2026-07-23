@@ -66,7 +66,7 @@ func TestPublishWithoutSubs(t *testing.T) {
 	}
 }
 
-// BenchmarkNonBlockingPublish_50_3_3 benchmarks the Guaranteed publishing strategy
+// BenchmarkGuaranteedPublish_50_3_3 benchmarks the Guaranteed publishing strategy
 // with 50 msgs per publishers, 3 subscribers with a 50 Millisecond work delay, and 3 publishers with 1 millisecond.
 func BenchmarkGuaranteedPublish_50_3_3(b *testing.B) {
 	benchmarkPublishingStrats(b, benchmarkConfig{
@@ -76,6 +76,80 @@ func BenchmarkGuaranteedPublish_50_3_3(b *testing.B) {
 		subWorkDuration:  time.Millisecond * 50,
 		pubWorkDuration:  time.Millisecond * 1,
 		strat:            pubgo.GaranteedPublish(), //nolint: misspell
+	})
+}
+
+func BenchmarkNonBlockingPublish_50_3_3(b *testing.B) {
+	benchmarkPublishingStrats(b, benchmarkConfig{
+		msgsPerPublisher: 50,
+		subs:             3,
+		pubs:             3,
+		subWorkDuration:  time.Millisecond * 50,
+		pubWorkDuration:  time.Millisecond * 1,
+		strat:            pubgo.NonBlockingPublish(), //nolint: misspell
+	})
+}
+
+// BenchmarkGuaranteedPublish_50_3_3_Balanced keeps publish rate under the
+// subscribers' drain rate (arrival ~15 msgs/s vs drain 20 msgs/s), so the
+// buffered channel (cap 10) absorbs bursts and Publish rarely blocks.
+func BenchmarkGuaranteedPublish_50_3_3_Balanced(b *testing.B) {
+	benchmarkPublishingStrats(b, benchmarkConfig{
+		msgsPerPublisher: 50,
+		subs:             3,
+		pubs:             3,
+		subWorkDuration:  time.Millisecond * 50,
+		pubWorkDuration:  time.Millisecond * 200,
+		strat:            pubgo.GaranteedPublish(), //nolint: misspell
+	})
+}
+
+// BenchmarkGuaranteedPublish_HighFanout and BenchmarkNonBlockingPublish_HighFanout
+// pit many fast publishers against a slow subscriber (arrival ~4000 msgs/s vs
+// drain 20 msgs/s). They highlight NonBlockingPublish's usefulness: Publish
+// calls stay fast regardless of the slow subscriber, whereas GaranteedPublish
+// calls increasingly block as the buffer fills. See avg_publish_delay_ns/op.
+func BenchmarkGuaranteedPublish_HighFanout(b *testing.B) {
+	benchmarkPublishingStrats(b, benchmarkConfig{
+		msgsPerPublisher: 10,
+		subs:             3,
+		pubs:             20,
+		subWorkDuration:  time.Millisecond * 50,
+		pubWorkDuration:  time.Millisecond * 5,
+		strat:            pubgo.GaranteedPublish(), //nolint: misspell
+	})
+}
+
+func BenchmarkNonBlockingPublish_HighFanout(b *testing.B) {
+	benchmarkPublishingStrats(b, benchmarkConfig{
+		msgsPerPublisher: 10,
+		subs:             3,
+		pubs:             20,
+		subWorkDuration:  time.Millisecond * 50,
+		pubWorkDuration:  time.Millisecond * 5,
+		strat:            pubgo.NonBlockingPublish(), //nolint: misspell
+	})
+}
+
+func BenchmarkGuaranteedPublish_200_35_10(b *testing.B) {
+	benchmarkPublishingStrats(b, benchmarkConfig{
+		msgsPerPublisher: 200,
+		subs:             35,
+		pubs:             10,
+		subWorkDuration:  time.Millisecond * 50,
+		pubWorkDuration:  time.Millisecond * 1,
+		strat:            pubgo.GaranteedPublish(), //nolint: misspell
+	})
+}
+
+func BenchmarkNonBlockingPublish_200_35_10(b *testing.B) {
+	benchmarkPublishingStrats(b, benchmarkConfig{
+		msgsPerPublisher: 200,
+		subs:             35,
+		pubs:             10,
+		subWorkDuration:  time.Millisecond * 50,
+		pubWorkDuration:  time.Millisecond * 1,
+		strat:            pubgo.NonBlockingPublish(), //nolint: misspell
 	})
 }
 
@@ -92,6 +166,8 @@ func benchmarkPublishingStrats(b *testing.B, cfg benchmarkConfig) {
 	l := &sync.Mutex{}
 	totalDelay := 0 * time.Second
 	avgDelay := make([]time.Duration, 0, cfg.subs*b.N)
+	totalPublishDelay := 0 * time.Second
+	publishCallCount := 0
 
 	for b.Loop() {
 		var wgs sync.WaitGroup
@@ -147,12 +223,20 @@ func benchmarkPublishingStrats(b *testing.B, cfg benchmarkConfig) {
 					// Do work.
 					time.Sleep(cfg.pubWorkDuration)
 
-					err := bus.Publish("pub msg", time.Now())
+					callStart := time.Now()
+					err := bus.Publish("pub msg", callStart)
+					callDelay := time.Since(callStart)
+
 					if err != nil {
 						b.Fail()
 
 						return
 					}
+
+					l.Lock()
+					totalPublishDelay += callDelay
+					publishCallCount++
+					l.Unlock()
 				}
 			})
 		}
@@ -167,6 +251,10 @@ func benchmarkPublishingStrats(b *testing.B, cfg benchmarkConfig) {
 
 	b.ReportMetric(float64(totalDelay)/float64(b.N), "total_delay_ns/op")
 	b.ReportMetric(float64(averageDuration(avgDelay))/float64(b.N), "avg_delay_ns/op")
+
+	if publishCallCount > 0 {
+		b.ReportMetric(float64(totalPublishDelay)/float64(publishCallCount), "avg_publish_delay_ns/op")
+	}
 }
 
 func averageDuration(durs []time.Duration) time.Duration {
