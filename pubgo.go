@@ -137,14 +137,19 @@ func (b *Bus) getSubs(topic string) ([]*Subscription, error) {
 	if m, ok := b.topics[topic]; ok {
 		s := make([]*Subscription, 0, len(m))
 
+		staleRatio := 10
+		stales := make([]int, 0, len(s)/staleRatio)
+
 		for x := range m {
 			if sub, ok := b.subs[x]; ok {
 				s = append(s, sub)
 			} else {
 				// remove sub from topic
-				go b.removeSubFromTopic(topic, x)
+				stales = append(stales, x)
 			}
 		}
+
+		go b.removeSubFromTopic(topic, stales...)
 
 		return s, nil
 	}
@@ -171,11 +176,13 @@ func (b *Bus) removeSub(id int) {
 	close(s.Msgs)
 }
 
-func (b *Bus) removeSubFromTopic(topic string, id int) {
+func (b *Bus) removeSubFromTopic(topic string, ids ...int) {
 	b.l.Lock()
 	defer b.l.Unlock()
 
-	delete(b.topics[topic], id)
+	for _, id := range ids {
+		delete(b.topics[topic], id)
+	}
 }
 
 func (b *Bus) Subscribe(topic string, opts ...OptHandler) *Subscription {
