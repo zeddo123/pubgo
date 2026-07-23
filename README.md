@@ -2,56 +2,119 @@
 [![golangci-lint](https://github.com/zeddo123/pubgo/actions/workflows/lint.yaml/badge.svg)](https://github.com/zeddo123/pubgo/actions/workflows/lint.yaml)
 
 # pubgo
-lightweight in-memory pub sub process for golang with multiple publishing and consuming strategies.
+
+A lightweight, in-process pub/sub library for Go. `pubgo` runs entirely in
+memory inside a single process — there's no broker, no network hop, and no
+external dependency to stand up. It's meant for fanning messages out to
+multiple in-process consumers (event buses, decoupling internal components,
+test fixtures, etc.), not for durable or cross-process messaging.
+
+## Scope
+
+What `pubgo` gives you:
+- A topic-based bus: subscribers register interest in a topic string, publishers
+  send messages to a topic, and every current subscriber of that topic gets a copy.
+- A choice of **publishing strategies** trading off delivery guarantees against
+  blocking behavior (see below).
+- Per-subscriber buffering and read timeouts, configurable independently for
+  each `Subscribe` call.
+- Combining multiple subscriptions into a single consumable stream (fan-in).
+
+What it deliberately does **not** do:
+- Persist messages to disk or any external store — everything lives in memory
+  and disappears when the process exits.
+- Cross-process or networked delivery — publishers and subscribers must live
+  in the same Go process.
+- Message ordering guarantees across topics, or replay/history of past messages.
 
 ## Installation
 ```sh
 go get github.com/zeddo123/pubgo
 ```
 
-## Usage
+## Concepts
+
+- **Bus**: the central dispatcher. Owns all topics and subscriptions and
+  applies the configured publishing strategy on every `Publish` call.
+- **Subscription**: returned by `Bus.Subscribe`, represents one consumer's
+  interest in a topic. Messages arrive on `Subscription.Msgs`, or can be read
+  via `Next`, `NextWithTimeout`, or `Do`.
+- **Publisher (strategy)**: the function that decides how a published message
+  is delivered to the topic's current subscribers.
+
+## Creating a bus
 
 ```go
+// NewBus starts an internal background goroutine tied to context.Background().
+bus := pubgo.NewBus(pubgo.DefaultOps())
+
+// NewBusWithContext ties that goroutine's lifetime to a context you control.
+// Cancelling ctx stops the bus's cleanup goroutine and releases its resources.
 ctx, cancel := context.WithCancel(context.Background())
 bus := pubgo.NewBusWithContext(ctx, pubgo.BusOps{
-    InitialTopicsCap: 10,
-    InitialSubsCap:   10,
-    // pubgo provides 3 publishing strategies:
-    //
-    // NonBlockingPublish: spawns goroutines for each subscriber, and sends the message with a timeout.
-    //
-    // GaranteedPublish: blocks until all subscribers have received the msg. 
-    // could block forever if subscriber are not consuming msgs.
-    //
-    // AvailablePublish: sends msg to available subscribers. Some subscribers might not receive the msg.
+    InitialTopicsCap: 10, // preallocate capacity for this many topics
+    InitialSubsCap:   10, // preallocate capacity for this many subscriptions
     PublishStrat:     pubgo.NonBlockingPublish(),
 })
+defer cancel()
+```
 
-// Start consuming msgs from the topics
-go func() {
-    // The subscriber selectes the size of its msgs buffer. Depending
-    // on which publishing strategy is chosen, when the buffer is full
-    // the publisher might block until a msg is pulled or the msgs are dropped.
-    s := b.Subscribe("topic#1", pubgo.WithBufferSize(100))
-    defer s.Done()
+`pubgo.DefaultOps()` returns sane defaults (`GaranteedPublish` as the strategy)
+if you don't need to tune capacities or pick a different strategy.
 
-    // Next blocks until a msg is received or the subscription has been
-    // cancelled.
-    msg, err := s.Next(context.Background())
-    
-    // NextWithTimeout blocks until a msg is received or a timeout is reached
-    msg, err := s.NextWithTimeout(context.Background())
+## Publishing strategies
 
-    // Do some work.
-}()
+Set via `BusOps.PublishStrat`, applied on every `bus.Publish` call:
 
-// you can also consume msgs through the subscription's Do member function:
-s := b.Subscribe("topic#1")
+| Strategy | Behavior |
+|---|---|
+| `pubgo.GaranteedPublish()` | Blocks until **every** subscriber has received the message. Guarantees delivery, but a slow or stalled subscriber can block the publisher indefinitely. |
+| `pubgo.AvailablePublish()` | Sends to subscribers that are immediately ready to receive; subscribers whose buffer is full are skipped for that message. Never blocks, but delivery isn't guaranteed. |
+| `pubgo.NonBlockingPublish()` | Spawns a goroutine per subscriber and sends with a 1-hour timeout, so `Publish` itself returns immediately. |
+| `pubgo.NonBlockingPublishWithTimeout(d)` | Same as `NonBlockingPublish`, but with a configurable per-subscriber send timeout `d` after which the message is dropped and logged. |
 
-// the func passed as argument to Do will run whenever a msg is received. Do exits
-// when subscription has been closed (s.Done()) or when the callback function return an error.
-s.Do(ctx, function(topic string, msg any) error {
-    log.Println("received msg", msg)
+Choose `GaranteedPublish` when subscribers are well-behaved and must not miss
+messages; `AvailablePublish` or `NonBlockingPublish`/`NonBlockingPublishWithTimeout`
+when the publisher must never be slowed down by a stuck subscriber.
+
+## Subscribing
+
+```go
+s := bus.Subscribe("topic#1",
+    // Size of the subscriber's message buffer (default: 0, unbuffered).
+    // Once full, publishers may block or drop messages depending on the
+    // publishing strategy in use.
+    pubgo.WithBufferSize(100),
+
+    // Timeout used by Next/NextWithTimeout when waiting for a message
+    // (default: 10s).
+    pubgo.WithReadTimeout(5*time.Second),
+)
+defer s.Done() // stops the bus from publishing to this subscription and releases it
+
+s.ID() // unique subscription id, useful for logging/debugging
+```
+
+### Reading messages
+
+```go
+// Next blocks until a message arrives or the subscription is closed.
+msg, err := s.Next(context.Background())
+
+// NextWithTimeout blocks until a message arrives or s's read timeout elapses.
+msg, err := s.NextWithTimeout(context.Background())
+
+// Or read the channel directly.
+for msg := range s.Msgs {
+    // ...
+}
+```
+
+### Consuming with a callback
+
+```go
+err := s.Do(ctx, func(topic string, msg any) error {
+    log.Println("received msg on", topic, ":", msg)
 
     str, ok := msg.(string)
     if !ok {
@@ -65,23 +128,74 @@ s.Do(ctx, function(topic string, msg any) error {
 
     return nil
 })
-
-err := bus.Publish("topic#1", "some msg to queue")
-
-// run cancel to stop the bus's internal goroutine to release resources
-cancel()
 ```
 
-#### Publishing without subscribers
-When there's a new for msgs to be published without the guarantee that there's any subscribers,
-you can check the error value returned:
+`Do` runs `fn` for every message received and blocks until `fn` returns a
+non-nil error or the subscription is closed.
+
+### Combining subscriptions (fan-in)
+
+Multiple subscriptions — even across different topics — can be merged into a
+single stream, useful when a consumer cares about several topics but wants to
+process them through one loop:
+
+```go
+s1 := bus.Subscribe("topic#1")
+s2 := bus.Subscribe("topic#2")
+
+combined := pubgo.Combine(100, s1, s2) // 100 = output channel buffer size
+defer combined.Done()                  // closes s1 and s2 too
+
+topic, msg, err := combined.Next(context.Background())
+// combined.NextWithTimeout(ctx, timeout) and combined.Do(ctx, fn) are also available
+```
+
+## Publishing
+
+```go
+err := bus.Publish("topic#1", "some msg to queue")
+```
+
+### Publishing without subscribers
+
+Publishing to a topic with no active subscribers returns `pubgo.ErrNoAvailableSubs`:
+
 ```go
 err := bus.Publish("topic#42", "important message")
-if err == pubgo.ErrNoAvailableSubs {
-    // Handle no subscribers
-} else err != nil {
-    // Handle error
+if errors.Is(err, pubgo.ErrNoAvailableSubs) {
+    // handle no subscribers
+} else if err != nil {
+    // handle other errors
 }
+```
+
+## Full example
+
+```go
+ctx, cancel := context.WithCancel(context.Background())
+defer cancel()
+
+bus := pubgo.NewBusWithContext(ctx, pubgo.BusOps{
+    InitialTopicsCap: 10,
+    InitialSubsCap:   10,
+    PublishStrat:     pubgo.NonBlockingPublish(),
+})
+
+go func() {
+    s := bus.Subscribe("topic#1", pubgo.WithBufferSize(100))
+    defer s.Done()
+
+    for {
+        msg, err := s.Next(context.Background())
+        if err != nil {
+            return
+        }
+        // do some work with msg
+        _ = msg
+    }
+}()
+
+err := bus.Publish("topic#1", "some msg to queue")
 ```
 
 ### Benchmark
