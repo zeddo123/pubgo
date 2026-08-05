@@ -122,10 +122,22 @@ func (b *Bus) writeSub(s *Subscription, topics ...string) int {
 // sub's channel
 func (b *Bus) acquireSub(s *Subscription, fn func(s *Subscription)) {
 	b.l.RLock()
+
+	// The subscription may have been unsubscribed (and its Msgs channel
+	// closed) since the caller's subs slice was snapshotted. The liveness
+	// check and Add must happen atomically under the same read-lock section
+	// removeSub takes its write lock in, so that removeSub's Wait() can
+	// never observe a zero counter and close the channel out from under fn.
+	if _, ok := b.subs[s.id]; !ok {
+		b.l.RUnlock()
+
+		return
+	}
+
 	wg := b.subSync[s.id]
+	wg.Add(1)
 	b.l.RUnlock()
 
-	wg.Add(1)
 	fn(s)
 	wg.Done()
 }

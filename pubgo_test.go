@@ -66,6 +66,38 @@ func TestPublishWithoutSubs(t *testing.T) {
 	}
 }
 
+// TestConcurrentPublishAndDone guards against a TOCTOU race where acquireSub
+// could observe a subscriber's WaitGroup, get preempted before Add(1), let
+// removeSub's Wait() return early and close the Msgs channel, and then send
+// on that now-closed channel. Run with -race; before the fix this reliably
+// panics with "send on closed channel" within a few hundred iterations.
+func TestConcurrentPublishAndDone(t *testing.T) {
+	for range 2000 {
+		ctx, cancel := context.WithCancel(t.Context())
+		b := pubgo.NewBusWithContext(ctx, pubgo.DefaultOps())
+		s := b.Subscribe("t", pubgo.WithBufferSize(1))
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			_ = b.Publish("t", "x")
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			s.Done()
+		}()
+
+		wg.Wait()
+		cancel()
+	}
+}
+
 // BenchmarkGuaranteedPublish_50_3_3 benchmarks the Guaranteed publishing strategy
 // with 50 msgs per publishers, 3 subscribers with a 50 Millisecond work delay, and 3 publishers with 1 millisecond.
 func BenchmarkGuaranteedPublish_50_3_3(b *testing.B) {
