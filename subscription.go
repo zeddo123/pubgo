@@ -27,6 +27,7 @@ type Subscription struct {
 	Msgs          chan any
 	done          chan<- int
 	doneListening chan struct{}
+	busShutdown   <-chan struct{}
 }
 
 type Subscriptions struct {
@@ -112,9 +113,17 @@ func (s *Subscription) Next(_ context.Context) (any, error) {
 // Done notifies the Bus to stop publishing msgs to it. Some publishing
 // strategies assume well-behaving subscribers. Without this call, publishers
 // could become blocked until msgs are consummed.
+//
+// If the Bus has already shut down (its context was canceled), the cancelSub
+// channel has no reader and may be closed; busShutdown lets Done return
+// instead of panicking on a send to a closed channel or blocking forever.
 func (s *Subscription) Done() {
 	close(s.doneListening)
-	s.done <- s.id
+
+	select {
+	case s.done <- s.id:
+	case <-s.busShutdown:
+	}
 }
 
 func (s *Subscription) ID() int {

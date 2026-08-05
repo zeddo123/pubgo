@@ -20,6 +20,7 @@ type Bus struct {
 	subs        map[int]*Subscription
 	cancelSub   chan int
 	cancelTopic chan string
+	shutdown    chan struct{}
 	publisher   Publisher
 	nextID      int
 }
@@ -62,6 +63,7 @@ func newBus(ops BusOps) *Bus {
 		subSync:     make(map[int]*sync.WaitGroup),
 		cancelSub:   make(chan int),
 		cancelTopic: make(chan string),
+		shutdown:    make(chan struct{}),
 		publisher:   ops.PublishStrat,
 	}
 }
@@ -74,8 +76,11 @@ func (b *Bus) watch(ctx context.Context) {
 		case id := <-b.cancelTopic:
 			b.removeTopic(id)
 		case <-ctx.Done():
-			close(b.cancelSub)
-			close(b.cancelTopic)
+			// cancelSub/cancelTopic are intentionally left open: Done() may
+			// still be racing to send on cancelSub, and sending on a closed
+			// channel panics. shutdown is what callers select against to
+			// know nobody is listening anymore.
+			close(b.shutdown)
 
 			return
 		}
@@ -198,6 +203,7 @@ func (b *Bus) Subscribe(topic string, opts ...OptHandler) *Subscription {
 		Msgs:          make(chan any, opt.BufferSize),
 		done:          b.cancelSub,
 		doneListening: make(chan struct{}),
+		busShutdown:   b.shutdown,
 	}
 
 	_ = b.writeSub(s, topic)

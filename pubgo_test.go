@@ -66,6 +66,21 @@ func TestPublishWithoutSubs(t *testing.T) {
 	}
 }
 
+// TestDoneAfterBusShutdown guards against Done() panicking with "send on
+// closed channel" when called after the Bus's context has already been
+// canceled: watch() stops draining cancelSub, so a plain unbuffered send
+// there has no reader once the channel is closed.
+func TestDoneAfterBusShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	b := pubgo.NewBusWithContext(ctx, pubgo.DefaultOps())
+	s := b.Subscribe("t", pubgo.WithBufferSize(1))
+
+	cancel()
+	time.Sleep(50 * time.Millisecond) // let watch() observe ctx.Done and shut down
+
+	s.Done()
+}
+
 // BenchmarkGuaranteedPublish_50_3_3 benchmarks the Guaranteed publishing strategy
 // with 50 msgs per publishers, 3 subscribers with a 50 Millisecond work delay, and 3 publishers with 1 millisecond.
 func BenchmarkGuaranteedPublish_50_3_3(b *testing.B) {
